@@ -1,0 +1,24 @@
+[
+    {
+        "nome": "Example 1",
+        "imap": {"server": "imap.example.com", "port": 993},
+        "account": {"email": "example@email.com", "auth_value": "Example@Password", "auth_type": "password"},
+        "url": "https://mail.google.com/mail/u/1/#inbox",
+        "black_list": [
+            "trashexample@email.com", "anotherexample@email.com"
+        ],
+        "white_list": [
+            "examplesmom@email.com"
+        ]
+    },
+    {
+        "nome": "Example 2",
+        "imap": {"server": "imap.example.com", "port": 993},
+        "account": {"email": "example2@email.com", "auth_value": "exam ples ecre tcod", "auth_type": "password"},
+        "url": "https://mail.google.com/mail/u/1/#inbox",
+        "black_list": [
+            "trashexample@email.com", "anotherexample@email.com"
+        ],
+        "white_list": []
+    }
+]
