@@ -1,126 +1,127 @@
-EmailManager
+# 📧 EmailManager
 
-O EmailManager é uma aplicação em Python que monitora contas de e-mail via IMAP e exibe notificações no Windows para novos e-mails, com suporte a lista branca, lista negra e múltiplas contas. Ele roda em segundo plano com ícone na bandeja do sistema.
+O **EmailManager** é uma aplicação desenvolvida em **Python** para monitoramento de contas de e-mail via **IMAP**, exibindo **notificações nativas do Windows** sempre que novos e-mails são recebidos.  
+Suporta **múltiplas contas**, **lista branca**, **lista negra** e execução em **segundo plano** com ícone na bandeja do sistema.
 
-📁 Estrutura básica
+---
 
-emailmanager.py → arquivo principal da aplicação
+## 📂 Estrutura do Projeto
 
-data.json → arquivo de configuração das contas (não incluído por padrão)
+```
+EmailManager/
+├── emailmanager.py      # Arquivo principal da aplicação
+├── data.json            # Arquivo de configuração (criado pelo usuário)
+├── data_example.json    # Exemplo de configuração
+├── active.ico           # Ícone do sistema ativo
+├── stopped.ico          # Ícone do sistema parado
+└── app.ico              # Ícone do executável (.exe)
+```
 
-data_example.json → exemplo de configuração
+---
 
-active.ico → ícone quando o serviço está ativo
+## ⚙️ Configuração Inicial
 
-stopped.ico → ícone quando o serviço está parado
+### 1️⃣ Definir o caminho do `data.json`
 
-app.ico → ícone do executável
+No arquivo **`emailmanager.py`**, edite a variável abaixo conforme o local onde o arquivo `data.json` ficará armazenado:
 
-⚙️ Configuração inicial
-1️⃣ Ajustar o caminho do data.json
-
-No arquivo emailmanager.py, edite a variável abaixo para apontar para o diretório desejado:
-
+```python
 DATA_DIR = r'C:\Brunca\EmailManager'
+```
 
+> ⚠️ **Atenção**  
+> O arquivo `data.json` **deve obrigatoriamente** estar dentro do diretório definido acima.
 
-📌 Importante:
-O arquivo final data.json deve ficar dentro desse diretório definido.
+---
 
-2️⃣ Configurar o arquivo de dados
+### 2️⃣ Configurar as contas de e-mail
 
-Abra o arquivo data_example.json
+1. Abra o arquivo **`data_example.json`**
+2. Edite os dados conforme sua necessidade:
 
-Ajuste os campos conforme sua necessidade:
+**Campos disponíveis:**
+- `nome` → Nome identificador da conta
+- `imap.server` → Servidor IMAP
+- `imap.port` → Porta do servidor
+- `account.email` → Endereço de e-mail
+- `account.auth_value` → Senha ou token
+- `account.auth_type` → Tipo de autenticação
+- `black_list` → Lista de remetentes a serem ignorados
+- `white_list` → Lista de remetentes permitidos
+- `url` → Link do webmail para abertura direta
 
-nome → nome identificador da conta
+3. Após a configuração, **renomeie o arquivo**:
 
-imap.server e imap.port
-
-account.email
-
-account.auth_value (senha ou token)
-
-black_list → remetentes a serem descartados
-
-white_list → remetentes permitidos
-
-url → link para abrir o webmail
-
-Exemplo:
-
-{
-    "nome": "Conta Principal",
-    "imap": { "server": "imap.exemplo.com", "port": 993 },
-    "account": {
-        "email": "email@exemplo.com",
-        "auth_value": "senha",
-        "auth_type": "password"
-    },
-    "url": "https://mail.google.com/",
-    "black_list": [],
-    "white_list": []
-}
-
-
-Após configurar, renomeie o arquivo:
-
+```
 data_example.json → data.json
+```
 
-🛠️ Gerando o executável (.exe)
-3️⃣ Instalar o PyInstaller
+---
 
-Certifique-se de que o Python esteja instalado e execute:
+## 🛠️ Gerando o Executável (.exe)
 
+### 3️⃣ Instalar o PyInstaller
+
+Com o Python já instalado, execute no terminal:
+
+```bash
 pip install pyinstaller
+```
 
-4️⃣ Gerar o executável
+---
 
-No diretório onde está o arquivo emailmanager.py, execute:
+### 4️⃣ Compilar o aplicativo
 
+No diretório onde está o arquivo `emailmanager.py`, execute:
+
+```bash
 pyinstaller --noconsole --onefile --icon=app.ico --add-data "active.ico;." --add-data "stopped.ico;." emailmanager.py
+```
 
+🔧 **O que esse comando faz:**
+- Gera um único arquivo `.exe`
+- Oculta o console do Windows
+- Inclui os ícones de status
+- Define o ícone do aplicativo
 
-📌 Esse comando:
+---
 
-Gera um único .exe
+## ▶️ Executando o EmailManager
 
-Oculta o console
+- O executável final será gerado em:
 
-Inclui os ícones necessários
-
-Define o ícone do aplicativo
-
-▶️ Executando o EmailManager
-
-O executável final estará em:
-
+```
 dist/emailmanager.exe
+```
 
+- Você pode mover o `.exe` para qualquer pasta desejada
+- Execute normalmente para iniciar o monitoramento
 
-Você pode mover o .exe para qualquer pasta de sua preferência
+---
 
-Basta executar o arquivo para iniciar o monitoramento
+## 🔄 Inicialização Automática com o Windows (Opcional)
 
-🔄 Inicialização com o Windows (opcional)
+Caso deseje que o EmailManager inicie junto com o sistema:
 
-Se desejar que o EmailManager inicie automaticamente com o sistema:
+1. Pressione **`Win + R`**
+2. Digite:
+   ```
+   shell:startup
+   ```
+3. Crie um **atalho** do arquivo `emailmanager.exe` dentro dessa pasta
 
-Pressione Win + R
+✔️ Pronto! O aplicativo será iniciado automaticamente ao ligar o computador.
 
-Digite:
+---
 
-shell:startup
+## 🧠 Observações Importantes
 
+- O controle do serviço (**Iniciar / Parar / Reiniciar / Sair**) é feito pelo **ícone na bandeja do sistema**
+- As notificações utilizam o sistema nativo do Windows
+- Não é necessário registrar AppID
+- Compatível com múltiplas contas IMAP
+- Ideal para uso pessoal ou corporativo
 
-Crie um atalho do emailmanager.exe nessa pasta
+---
 
-Pronto 🎉 — o aplicativo iniciará junto com o Windows.
-
-🧠 Observações finais
-
-O controle do serviço (Iniciar, Parar, Reiniciar, Sair) é feito pelo ícone na bandeja
-
-As notificações funcionam sem necessidade de registro de AppID
-
-Compatível com múltiplas contas IMAP
+✨ **EmailManager — monitore seus e-mails sem abrir o navegador.**
