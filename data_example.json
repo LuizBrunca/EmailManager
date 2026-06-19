@@ -1,24 +1,29 @@
-[
-    {
-        "nome": "Example 1",
-        "imap": {"server": "imap.example.com", "port": 993},
-        "account": {"email": "example@email.com", "auth_value": "Example@Password", "auth_type": "password"},
-        "url": "https://mail.google.com/mail/u/1/#inbox",
-        "black_list": [
-            "trashexample@email.com", "anotherexample@email.com"
-        ],
-        "white_list": [
-            "examplesmom@email.com"
-        ]
-    },
-    {
-        "nome": "Example 2",
-        "imap": {"server": "imap.example.com", "port": 993},
-        "account": {"email": "example2@email.com", "auth_value": "exam ples ecre tcod", "auth_type": "password"},
-        "url": "https://mail.google.com/mail/u/1/#inbox",
-        "black_list": [
-            "trashexample@email.com", "anotherexample@email.com"
-        ],
-        "white_list": []
-    }
-]
+{
+    "interval": 30,
+    "accounts": [
+        {
+            "nome": "Work Gmail",
+            "imap": { "server": "imap.gmail.com", "port": 993 },
+            "account": {
+                "email": "you@gmail.com",
+                "auth_value": "your-app-password",
+                "auth_type": "password"
+            },
+            "url": "https://mail.google.com",
+            "black_list": ["noreply@spam.com"],
+            "white_list": []
+        },
+        {
+            "nome": "Personal Outlook",
+            "imap": { "server": "outlook.office365.com", "port": 993 },
+            "account": {
+                "email": "you@outlook.com",
+                "auth_value": "your-password",
+                "auth_type": "password"
+            },
+            "url": "https://outlook.live.com",
+            "black_list": [],
+            "white_list": ["boss@company.com", "family@example.com"]
+        }
+    ]
+}
