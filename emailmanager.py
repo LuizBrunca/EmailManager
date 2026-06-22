@@ -79,6 +79,7 @@ def build_readers(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
             'url': d.get('url', ''),
             'black_list': d.get('black_list', []),
             'white_list': d.get('white_list', []),
+            'important_list': d.get('important_list', []),
         })
     return readers, interval
 
@@ -179,7 +180,7 @@ $notifier.Show($toast)
 # ── Email processing ───────────────────────────────────────────────────────────
 def process_account(
     name: str, reader: EzReader, url: str,
-    black_list: list[str], white_list: list[str],
+    black_list: list[str], white_list: list[str], important_list: list[str],
 ) -> None:
     _logger.debug('Checking account: %s', name)
     try:
@@ -194,6 +195,15 @@ def process_account(
                     _logger.info('[%s] BLACKLISTED — trashed: %s', name, sender)
                     r.move_to_trash(email)
                     continue
+
+                if any(i in sender for i in important_list):
+                    message = f'From: {sender}\nSubject: {email.subject}'
+                    body = email.body.lower()
+                    if ' code ' in body or ' código ' in body:
+                        message += f'\nBody: {email.body.replace(chr(10), " ")}'
+                    _logger.info('[%s] IMPORTANT — notifying (left unread): %s', name, sender)
+                    notify(f'New email — {name}', message, url)
+                    continue  # intentionally NOT marking as read
 
                 if white_list and not any(w in sender for w in white_list):
                     _logger.info('[%s] NOT IN WHITELIST — silenced: %s', name, sender)
@@ -239,7 +249,7 @@ def _background_loop(event: threading.Event) -> None:
                 break
             process_account(
                 account['name'], account['reader'],
-                account['url'], account['black_list'], account['white_list'],
+                account['url'], account['black_list'], account['white_list'], account['important_list'],
             )
         event.wait(interval)
     _logger.info('Background loop stopped')
@@ -561,6 +571,11 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
           <textarea name="white_list" placeholder="boss@company.com&#10;client@partner.com"></textarea>
           <span class="hint">One sender per line. If set, only these senders trigger notifications.</span>
         </div>
+        <div class="form-row span-2">
+          <label style="color:#f59e0b">Importants</label>
+          <textarea name="important_list" placeholder="ceo@company.com&#10;@vip-domain.com" style="border-color:#92400e"></textarea>
+          <span class="hint">One sender per line. These always trigger notifications and the email is <strong>left unread</strong> until you read it manually.</span>
+        </div>
       </div>
       <div class="acct-footer">
         <button class="btn btn-danger btn-sm" onclick="removeAcct(this)">Remove Account</button>
@@ -606,8 +621,9 @@ function appendCard(acct) {
     card.querySelector('[name=auth_value]').value  = acct.account?.auth_value   || '';
     card.querySelector('[name=imap_server]').value = acct.imap?.server          || '';
     card.querySelector('[name=imap_port]').value   = acct.imap?.port            || 993;
-    card.querySelector('[name=black_list]').value  = (acct.black_list || []).join('\n');
-    card.querySelector('[name=white_list]').value  = (acct.white_list || []).join('\n');
+    card.querySelector('[name=black_list]').value     = (acct.black_list     || []).join('\n');
+    card.querySelector('[name=white_list]').value     = (acct.white_list     || []).join('\n');
+    card.querySelector('[name=important_list]').value = (acct.important_list || []).join('\n');
   }
 
   document.getElementById('accounts-list').appendChild(card);
@@ -635,8 +651,9 @@ function readCard(card) {
     url:  v('url'),
     account: { email: v('email'), auth_value: v('auth_value'), auth_type: 'password' },
     imap:    { server: v('imap_server'), port: parseInt(v('imap_port')) || 993 },
-    black_list: lines(v('black_list')),
-    white_list: lines(v('white_list')),
+    black_list:     lines(v('black_list')),
+    white_list:     lines(v('white_list')),
+    important_list: lines(v('important_list')),
   };
 }
 
