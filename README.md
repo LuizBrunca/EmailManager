@@ -13,6 +13,7 @@ A lightweight Windows desktop app that monitors multiple IMAP email accounts and
 - **System tray control** — Start / Restart / Stop / Exit, no console window
 - **Blacklist** — senders on the blacklist are automatically moved to trash and skipped
 - **Whitelist** — when set, only senders on the whitelist trigger notifications; all others are silently marked as read
+- **Importants** — senders on this list always trigger notifications and the email is **left unread** so alerts repeat every cycle until you read it manually
 - **Code detection** — emails whose body contains the word "code" or "código" show the full body inline in the notification (useful for OTP / auth codes)
 - **Configurable interval** — set polling frequency in `data.json`
 - **Portable** — compiles to a single `.exe` with no installer needed
@@ -65,7 +66,8 @@ Edit `data.json`:
             },
             "url": "https://mail.google.com",
             "black_list": ["noreply@spam.com"],
-            "white_list": []
+            "white_list": [],
+            "important_list": ["ceo@company.com", "@vip-domain.com"]
         }
     ]
 }
@@ -85,6 +87,18 @@ Edit `data.json`:
 | `url` | Webmail URL opened when you click the notification |
 | `black_list` | Senders auto-moved to trash (no notification) |
 | `white_list` | If non-empty, only these senders trigger notifications |
+| `important_list` | These senders always notify and the email is left unread until you read it manually |
+
+**Sender matching** is by substring, so `@spam.com`, `newsletter`, and `noreply` all work — full addresses are not required.
+
+**Priority order** (evaluated top to bottom per email):
+
+| Priority | List | Action |
+|---|---|---|
+| 1 | Blacklist | Move to trash, skip |
+| 2 | Importants | Notify, **leave unread** (repeats every cycle) |
+| 3 | Whitelist | If set and sender not matched, mark as read silently |
+| 4 | Default | Notify and mark as read |
 
 > **Gmail note:** Generate an [App Password](https://myaccount.google.com/apppasswords) — IMAP with 2FA requires it.
 
