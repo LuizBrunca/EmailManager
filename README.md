@@ -15,7 +15,8 @@ A lightweight Windows desktop app that monitors multiple IMAP email accounts and
 - **Whitelist** — when set, only senders on the whitelist trigger notifications; all others are silently marked as read
 - **Importants** — senders on this list always trigger notifications and the email is **left unread** so alerts repeat every cycle until you read it manually
 - **Code detection** — emails whose body contains the word "code" or "código" show the full body inline in the notification (useful for OTP / auth codes)
-- **Configurable interval** — set polling frequency in `data.json`
+- **Configurable interval** — set polling frequency in the Settings UI
+- **Web UI** — configure everything through a built-in settings page; no manual file editing needed
 - **Portable** — compiles to a single `.exe` with no installer needed
 
 ---
@@ -44,52 +45,33 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure your accounts
+### 3. Run
 
 ```bash
-copy data_example.json data.json
+python emailmanager.py
 ```
 
-Edit `data.json`:
+On first launch the Settings page opens automatically in your browser. Right-click the tray icon at any time to reopen it.
 
-```json
-{
-    "interval": 30,
-    "accounts": [
-        {
-            "nome": "My Gmail",
-            "imap": { "server": "imap.gmail.com", "port": 993 },
-            "account": {
-                "email": "you@gmail.com",
-                "auth_value": "your-app-password",
-                "auth_type": "password"
-            },
-            "url": "https://mail.google.com",
-            "black_list": ["noreply@spam.com"],
-            "white_list": [],
-            "important_list": ["ceo@company.com", "@vip-domain.com"]
-        }
-    ]
-}
-```
+---
 
-**Fields:**
+## Configuration
+
+All settings are managed through the built-in web UI at `http://127.0.0.1:5050`.
+
+**Per-account fields:**
 
 | Field | Description |
 |---|---|
-| `interval` | Polling interval in seconds (default: `30`) |
-| `nome` | Display name shown in notifications |
-| `imap.server` | IMAP hostname (e.g. `imap.gmail.com`) |
-| `imap.port` | IMAP port — almost always `993` (SSL) |
-| `account.email` | Your email address |
-| `account.auth_value` | Password or app token |
-| `account.auth_type` | Authentication type (`"password"`) |
-| `url` | Webmail URL opened when you click the notification |
-| `black_list` | Senders auto-moved to trash (no notification) |
-| `white_list` | If non-empty, only these senders trigger notifications |
-| `important_list` | These senders always notify and the email is left unread until you read it manually |
+| Account name | Display name shown in notifications |
+| IMAP server / port | e.g. `imap.gmail.com` / `993` |
+| Email / Password | Your credentials or app token |
+| URL | Webmail URL opened when you click a toast notification |
+| Blacklist | Senders auto-moved to trash (one per line) |
+| Whitelist | If non-empty, only these senders trigger notifications (one per line) |
+| Importants | These senders always notify and the email is left unread until you read it manually (one per line) |
 
-**Sender matching** is by substring, so `@spam.com`, `newsletter`, and `noreply` all work — full addresses are not required.
+**Sender matching** is by substring — `@spam.com`, `newsletter`, and `noreply` all work. Full addresses are not required.
 
 **Priority order** (evaluated top to bottom per email):
 
@@ -102,15 +84,13 @@ Edit `data.json`:
 
 > **Gmail note:** Generate an [App Password](https://myaccount.google.com/apppasswords) — IMAP with 2FA requires it.
 
-> **Security:** `data.json` is in `.gitignore` and will never be committed. Never add it manually.
+Saving in the UI automatically restarts monitoring with the new settings.
 
-### 4. Run
+---
 
-```bash
-python emailmanager.py
-```
+## Cleanup
 
-The app starts minimized to the system tray. Right-click the tray icon to control it.
+Right-click the tray icon → **Cleanup** to bulk-delete emails by sender, date range, or both — with a preview before deletion.
 
 ---
 
@@ -125,15 +105,7 @@ pyinstaller --noconsole --onefile --icon=app.ico --add-data "active.ico;." --add
 
 Output: `dist\emailmanager.exe`
 
-**Deployment layout — `data.json` lives next to the exe, not inside it:**
-
-```
-anywhere\
-├── emailmanager.exe   ← compiled app (never changes)
-└── data.json          ← your config (edit freely, no recompile needed)
-```
-
-You can update accounts, passwords, or the polling interval by editing `data.json` and restarting the app from the tray — no rebuild required. If `data.json` is missing, the app will show a notification with the exact path where it expects the file.
+The config is stored in `C:\ProgramData\EmailManager\data.json` — separate from the exe so you never need to rebuild after changing settings.
 
 ---
 
@@ -151,8 +123,6 @@ The app will launch automatically on every login.
 ```
 EmailManager/
 ├── emailmanager.py       # Application source
-├── data_example.json     # Config template (safe to commit)
-├── data.json             # Your config with credentials (gitignored)
 ├── active.ico            # Tray icon — monitoring active
 ├── stopped.ico           # Tray icon — monitoring stopped
 ├── app.ico               # Executable icon
