@@ -132,6 +132,12 @@ def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200)
             pass
     return preview
 
+def _imap_folder(folder: str) -> str:
+    """Quote folder names that contain spaces or start with '[' as required by IMAP."""
+    if ' ' in folder or folder.startswith('['):
+        return f'"{folder}"'
+    return folder
+
 def _batch_store(conn: imaplib.IMAP4_SSL, uids: list[bytes], flag: str) -> None:
     for i in range(0, len(uids), 500):
         uid_str = b','.join(uids[i:i + 500])
@@ -1032,7 +1038,7 @@ def api_cleanup_preview():
         criteria = _build_criteria(sender, date_from, date_to)
         _logger.info('Cleanup preview — account: %s folder: %s criteria: %s', acct_name, folder, criteria)
         conn = _imap_connect(acct_cfg)
-        conn.select(folder, readonly=True)
+        conn.select(_imap_folder(folder), readonly=True)
         _, data = conn.uid('search', None, criteria)
         uids    = data[0].split() if data[0] else []
         preview = _fetch_preview(conn, uids)
@@ -1063,13 +1069,22 @@ def api_cleanup_delete():
     try:
         criteria = _build_criteria(sender, date_from, date_to)
         conn = _imap_connect(acct_cfg)
-        conn.select(folder, readonly=False)
+        conn.select(_imap_folder(folder), readonly=False)
         _, data = conn.uid('search', None, criteria)
         uids    = data[0].split() if data[0] else []
 
         if uids:
-            _batch_store(conn, uids, '(\\Deleted)')
-            conn.expunge()
+            if folder.upper().startswith('[GMAIL]/'):
+                # Gmail virtual folders require moving to Trash before expunging
+                trash = _imap_folder('[Gmail]/Trash')
+                for i in range(0, len(uids), 500):
+                    uid_str = b','.join(uids[i:i + 500])
+                    conn.uid('COPY', uid_str, trash)
+                    conn.uid('STORE', uid_str, '+FLAGS', '\\Deleted')
+                conn.expunge()
+            else:
+                _batch_store(conn, uids, '(\\Deleted)')
+                conn.expunge()
 
         conn.logout()
         _logger.info('Cleanup delete — %d email(s) deleted from %s/%s', len(uids), acct_name, folder)
