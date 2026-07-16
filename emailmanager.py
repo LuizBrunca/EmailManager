@@ -38,13 +38,14 @@ _logger.addHandler(_fh)
 stop_event = threading.Event()
 bg_thread: threading.Thread | None = None
 tray_icon: Icon | None = None  # type: ignore
+_notifications_enabled: bool = True
 
 # ── Flask app ──────────────────────────────────────────────────────────────────
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 web_app = Flask(__name__)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-_DEFAULT_CONFIG: dict[str, Any] = {'interval': 30, 'accounts': []}
+_DEFAULT_CONFIG: dict[str, Any] = {'interval': 30, 'notifications_enabled': True, 'accounts': []}
 
 def ensure_config_dir() -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -58,7 +59,7 @@ def read_config() -> dict[str, Any]:
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         data: Any = json.load(f)
     if isinstance(data, list):
-        return {'interval': 30, 'accounts': data}
+        return {'interval': 30, 'notifications_enabled': True, 'accounts': data}
     return data
 
 def write_config(config: dict[str, Any]) -> None:
@@ -80,6 +81,8 @@ def build_readers(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
             'black_list': d.get('black_list', []),
             'white_list': d.get('white_list', []),
             'important_list': d.get('important_list', []),
+            'notify': d.get('notify', True),
+            'notify_non_important': d.get('notify_non_important', True),
         })
     return readers, interval
 
@@ -148,6 +151,8 @@ def _ps_escape(value: str) -> str:
     return value.replace("'", "''")
 
 def notify(title: str, message: str, url: str = '') -> None:
+    if not _notifications_enabled:
+        return
     t = _ps_escape(title)
     m = _ps_escape(message)
     u = _ps_escape(url)
@@ -187,6 +192,7 @@ $notifier.Show($toast)
 def process_account(
     name: str, reader: EzReader, url: str,
     black_list: list[str], white_list: list[str], important_list: list[str],
+    notify_enabled: bool = True, notify_non_important: bool = True,
 ) -> None:
     _logger.debug('Checking account: %s', name)
     try:
@@ -208,7 +214,8 @@ def process_account(
                     if ' code ' in body or ' código ' in body:
                         message += f'\nBody: {email.body.replace(chr(10), " ")}'
                     _logger.info('[%s] IMPORTANT — notifying (left unread): %s', name, sender)
-                    notify(f'New email — {name}', message, url)
+                    if notify_enabled:
+                        notify(f'New email — {name}', message, url)
                     continue  # intentionally NOT marking as read
 
                 if white_list and not any(w in sender for w in white_list):
@@ -222,14 +229,16 @@ def process_account(
                     message += f'\nBody: {email.body.replace(chr(10), " ")}'
 
                 _logger.info('[%s] NOTIFYING — from: %s | subject: %s', name, sender, email.subject)
-                notify(f'New email — {name}', message, url)
+                if notify_enabled and notify_non_important:
+                    notify(f'New email — {name}', message, url)
                 r.mark_as_read(email)
     except Exception as exc:
         _logger.exception('[%s] Error: %s — %s', name, type(exc).__name__, exc)
-        try:
-            notify('EmailManager', f'Error reading {name}: {type(exc).__name__}: {exc}')
-        except Exception:
-            pass
+        if notify_enabled:
+            try:
+                notify('EmailManager', f'Error reading {name}: {type(exc).__name__}: {exc}')
+            except Exception:
+                pass
 
 def _background_loop(event: threading.Event) -> None:
     _logger.info('Background loop starting')
@@ -256,6 +265,7 @@ def _background_loop(event: threading.Event) -> None:
             process_account(
                 account['name'], account['reader'],
                 account['url'], account['black_list'], account['white_list'], account['important_list'],
+                account['notify'], account['notify_non_important'],
             )
         event.wait(interval)
     _logger.info('Background loop stopped')
@@ -291,6 +301,14 @@ def _restart() -> None:
     _start()
 
 # ── System tray handlers ───────────────────────────────────────────────────────
+def on_toggle_notifications(_icon: Icon, _item: MenuItem) -> None:
+    global _notifications_enabled
+    _notifications_enabled = not _notifications_enabled
+    config = read_config()
+    config['notifications_enabled'] = _notifications_enabled
+    write_config(config)
+    _logger.info('Notifications toggled %s', 'ON' if _notifications_enabled else 'OFF')
+
 def on_settings(_icon: Icon, _item: MenuItem) -> None:
     webbrowser.open(f'http://127.0.0.1:{FLASK_PORT}')
 
@@ -400,6 +418,9 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
     box-shadow: 0 0 0 3px rgba(59,130,246,.18);
   }
   .form-row textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
+  .form-row-checkbox { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; cursor: pointer; }
+  .form-row-checkbox input[type=checkbox] { width: 16px; height: 16px; accent-color: #3b82f6; cursor: pointer; flex-shrink: 0; }
+  .form-row-checkbox span { font-size: .8rem; font-weight: 600; color: #94a3b8; }
   .hint { font-size: .72rem; color: #475569; margin-top: 2px; }
   .span-2 { grid-column: span 2; }
 
@@ -546,6 +567,14 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
           <label>Account name</label>
           <input type="text" name="nome" placeholder="e.g. Work Gmail" autocomplete="off">
         </div>
+        <label class="form-row-checkbox span-2">
+          <input type="checkbox" name="notify" checked>
+          <span>Enable notifications for this account</span>
+        </label>
+        <label class="form-row-checkbox span-2">
+          <input type="checkbox" name="notify_non_important" checked>
+          <span>Notify non-important emails</span>
+        </label>
         <div class="form-row">
           <label>URL to open on notification</label>
           <input type="url" name="url" placeholder="https://mail.google.com">
@@ -630,6 +659,8 @@ function appendCard(acct) {
     card.querySelector('[name=black_list]').value     = (acct.black_list     || []).join('\n');
     card.querySelector('[name=white_list]').value     = (acct.white_list     || []).join('\n');
     card.querySelector('[name=important_list]').value = (acct.important_list || []).join('\n');
+    card.querySelector('[name=notify]').checked                 = acct.notify                 !== false;
+    card.querySelector('[name=notify_non_important]').checked   = acct.notify_non_important    !== false;
   }
 
   document.getElementById('accounts-list').appendChild(card);
@@ -652,6 +683,7 @@ function removeAcct(btn) {
 function readCard(card) {
   const v     = name => card.querySelector(`[name=${name}]`).value.trim();
   const lines = val  => val.split('\n').map(s => s.trim()).filter(Boolean);
+  const c     = name => card.querySelector(`[name=${name}]`).checked;
   return {
     nome: v('nome'),
     url:  v('url'),
@@ -660,6 +692,8 @@ function readCard(card) {
     black_list:     lines(v('black_list')),
     white_list:     lines(v('white_list')),
     important_list: lines(v('important_list')),
+    notify:               c('notify'),
+    notify_non_important: c('notify_non_important'),
   };
 }
 
@@ -1007,6 +1041,8 @@ def api_save_config():
     if not data:
         return jsonify({'error': 'Invalid JSON'}), 400
     try:
+        if 'notifications_enabled' not in data:
+            data['notifications_enabled'] = read_config().get('notifications_enabled', True)
         write_config(data)
         threading.Thread(target=_restart, daemon=True).start()
         return jsonify({'ok': True})
@@ -1102,6 +1138,7 @@ if __name__ == '__main__':
     _logger.info('═' * 50)
     _logger.info('EmailManager starting — log: %s', LOG_PATH)
     first_run = not os.path.exists(CONFIG_PATH)
+    _notifications_enabled = read_config().get('notifications_enabled', True)
 
     flask_thread = threading.Thread(target=_run_flask, daemon=True)
     flask_thread.start()
@@ -1110,6 +1147,10 @@ if __name__ == '__main__':
         'EmailManager',
         Image.open(ICON_ACTIVE),
         menu=Menu(
+            MenuItem(
+                lambda item: f'Notifications: {"On" if _notifications_enabled else "Off"}',
+                on_toggle_notifications,
+            ),
             MenuItem('Settings', on_settings),
             MenuItem('Cleanup',  on_cleanup),
             MenuItem('View Log', on_view_log),

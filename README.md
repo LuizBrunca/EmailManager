@@ -10,10 +10,12 @@ A lightweight Windows desktop app that monitors multiple IMAP email accounts and
 
 - **Multi-account** — monitor as many IMAP accounts as you want simultaneously
 - **Native Windows notifications** — uses `Windows.UI.Notifications` with an "Open email" action button that opens your webmail
-- **System tray control** — Start / Restart / Stop / Exit, no console window
+- **System tray control** — Start / Restart / Stop / Toggle Notifications / Exit, no console window
 - **Blacklist** — senders on the blacklist are automatically moved to trash and skipped
 - **Whitelist** — when set, only senders on the whitelist trigger notifications; all others are silently marked as read
 - **Importants** — senders on this list always trigger notifications and the email is **left unread** so alerts repeat every cycle until you read it manually
+- **Per-account notification toggles** — mute all notifications for an account, or just regular (non-important) mail, independently per account
+- **Global notifications toggle** — mute all toast notifications from the tray icon with one click, no need to open Settings
 - **Code detection** — emails whose body contains the word "code" or "código" show the full body inline in the notification (useful for OTP / auth codes)
 - **Configurable interval** — set polling frequency in the Settings UI
 - **Web UI** — configure everything through a built-in settings page; no manual file editing needed
@@ -70,6 +72,8 @@ All settings are managed through the built-in web UI at `http://127.0.0.1:5050`.
 | Blacklist | Senders auto-moved to trash (one per line) |
 | Whitelist | If non-empty, only these senders trigger notifications (one per line) |
 | Importants | These senders always notify and the email is left unread until you read it manually (one per line) |
+| Notify | Master switch for this account — off silences everything for it, including error notices (default: on) |
+| Notify non-important | Off = regular emails still marked read but not notified; Importants unaffected (default: on) |
 
 **Sender matching** is by substring — `@spam.com`, `newsletter`, and `noreply` all work. Full addresses are not required.
 
@@ -82,9 +86,15 @@ All settings are managed through the built-in web UI at `http://127.0.0.1:5050`.
 | 3 | Whitelist | If set and sender not matched, mark as read silently |
 | 4 | Default | Notify and mark as read |
 
+The **Notify** and **Notify non-important** toggles apply on top of this priority order, not instead of it: turning **Notify** off silences everything for that account (steps 2 and 4 above still run their read/unread bookkeeping, just without a toast, and step-4's error notices are silenced too); turning off **Notify non-important** only silences step 4, leaving Importants (step 2) unaffected.
+
 > **Gmail note:** Generate an [App Password](https://myaccount.google.com/apppasswords) — IMAP with 2FA requires it.
 
 Saving in the UI automatically restarts monitoring with the new settings.
+
+### Global notifications toggle
+
+Right-click the tray icon → **Notifications: On/Off** mutes all toast notifications globally — including error/system messages like "Exiting…" or "Could not load config" — regardless of per-account settings. The label reflects the current state and toggling takes effect immediately, no restart needed. The setting persists to `data.json` and is honored on next launch.
 
 ---
 
