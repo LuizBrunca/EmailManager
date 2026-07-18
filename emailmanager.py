@@ -91,6 +91,9 @@ def _imap_connect(acct_cfg: dict) -> imaplib.IMAP4_SSL:
     imap = acct_cfg['imap']
     acc  = acct_cfg['account']
     ctx  = ssl.create_default_context()
+    if not imap.get('verify_ssl', True):
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
     conn = imaplib.IMAP4_SSL(imap['server'], int(imap['port']), ssl_context=ctx)
     conn.login(acc['email'], acc['auth_value'])
     return conn
@@ -596,6 +599,10 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
           <label>IMAP port</label>
           <input type="number" name="imap_port" value="993">
         </div>
+        <label class="form-row-checkbox span-2">
+          <input type="checkbox" name="verify_ssl" checked>
+          <span>Verify SSL certificate (uncheck only for a trusted internal server with a self-signed certificate)</span>
+        </label>
         <div class="form-row span-2">
           <label>Blacklist</label>
           <textarea name="black_list" placeholder="noreply@spam.com&#10;ads@newsletter.com"></textarea>
@@ -656,6 +663,7 @@ function appendCard(acct) {
     card.querySelector('[name=auth_value]').value  = acct.account?.auth_value   || '';
     card.querySelector('[name=imap_server]').value = acct.imap?.server          || '';
     card.querySelector('[name=imap_port]').value   = acct.imap?.port            || 993;
+    card.querySelector('[name=verify_ssl]').checked = acct.imap?.verify_ssl     !== false;
     card.querySelector('[name=black_list]').value     = (acct.black_list     || []).join('\n');
     card.querySelector('[name=white_list]').value     = (acct.white_list     || []).join('\n');
     card.querySelector('[name=important_list]').value = (acct.important_list || []).join('\n');
@@ -688,7 +696,7 @@ function readCard(card) {
     nome: v('nome'),
     url:  v('url'),
     account: { email: v('email'), auth_value: v('auth_value'), auth_type: 'password' },
-    imap:    { server: v('imap_server'), port: parseInt(v('imap_port')) || 993 },
+    imap:    { server: v('imap_server'), port: parseInt(v('imap_port')) || 993, verify_ssl: c('verify_ssl') },
     black_list:     lines(v('black_list')),
     white_list:     lines(v('white_list')),
     important_list: lines(v('important_list')),
