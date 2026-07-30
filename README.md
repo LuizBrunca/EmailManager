@@ -117,6 +117,12 @@ Output: `dist\emailmanager.exe`
 
 The config is stored in `C:\ProgramData\EmailManager\data.json` — separate from the exe so you never need to rebuild after changing settings.
 
+### Building the installer
+
+Requires [Inno Setup](https://jrsoftware.org/isinfo.php). After building the `.exe` above, compile `installer.iss` (via the Inno Setup GUI, or `ISCC installer.iss` on the command line).
+
+Output: `installer_output\EmailManager-Setup-<version>.exe` — installs to `%LOCALAPPDATA%\Programs\EmailManager`, adds Start Menu / optional desktop shortcuts, an uninstaller, and an optional "start with Windows" shortcut.
+
 ---
 
 ## Auto-start with Windows

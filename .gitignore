@@ -5,3 +5,4 @@ __pycache__/
 .mypy_cache/
 *.spec
 data.json
+installer_output/
