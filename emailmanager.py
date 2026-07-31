@@ -1082,7 +1082,10 @@ def api_cleanup_preview():
         criteria = _build_criteria(sender, date_from, date_to)
         _logger.info('Cleanup preview — account: %s folder: %s criteria: %s', acct_name, folder, criteria)
         conn = _imap_connect(acct_cfg)
-        conn.select(_imap_folder(folder), readonly=True)
+        status, _ = conn.select(_imap_folder(folder), readonly=True)
+        if status != 'OK':
+            conn.logout()
+            return jsonify({'error': f'Folder not found: {folder}'}), 400
         _, data = conn.uid('search', None, criteria)
         uids    = data[0].split() if data[0] else []
         preview = _fetch_preview(conn, uids)
@@ -1113,7 +1116,10 @@ def api_cleanup_delete():
     try:
         criteria = _build_criteria(sender, date_from, date_to)
         conn = _imap_connect(acct_cfg)
-        conn.select(_imap_folder(folder), readonly=False)
+        status, _ = conn.select(_imap_folder(folder), readonly=False)
+        if status != 'OK':
+            conn.logout()
+            return jsonify({'error': f'Folder not found: {folder}'}), 400
         _, data = conn.uid('search', None, criteria)
         uids    = data[0].split() if data[0] else []
 
