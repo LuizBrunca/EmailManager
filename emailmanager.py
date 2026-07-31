@@ -10,7 +10,7 @@ import email as _email_mod
 from email.header import decode_header as _hdr_decode
 from pystray import Icon, MenuItem, Menu # type: ignore
 from PIL import Image
-from re import findall
+from re import findall, compile as _re_compile
 from flask import Flask, request, jsonify, render_template_string
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
@@ -143,6 +143,28 @@ def _imap_folder(folder: str) -> str:
     if ' ' in folder or folder.startswith('['):
         return f'"{folder}"'
     return folder
+
+_LIST_RE = _re_compile(r'^\(([^)]*)\)\s+"([^"]*)"\s+(.+)$')
+
+def _list_folders(conn: imaplib.IMAP4_SSL) -> list[str]:
+    """Return real mailbox names from the server, avoiding locale-guessing (e.g.
+    Gmail's special folders are named in the account's own language)."""
+    status, data = conn.list()
+    if status != 'OK':
+        return []
+    names = []
+    for raw in data:
+        if not raw:
+            continue
+        line = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else raw
+        m = _LIST_RE.match(line)
+        if not m:
+            continue
+        flags, _, name = m.groups()
+        if '\\Noselect' in flags:
+            continue
+        names.append(name.strip('"'))
+    return names
 
 def _batch_store(conn: imaplib.IMAP4_SSL, uids: list[bytes], flag: str) -> None:
     for i in range(0, len(uids), 500):
@@ -876,8 +898,8 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="form-row">
         <label for="folder">Folder</label>
-        <input type="text" id="folder" value="INBOX" placeholder="INBOX">
-        <span class="hint">Examples: INBOX &nbsp;·&nbsp; [Gmail]/All Mail &nbsp;·&nbsp; [Gmail]/Spam</span>
+        <select id="folder"><option value="INBOX">INBOX</option></select>
+        <span class="hint" id="folder-hint">Select an account to load its real folder list.</span>
       </div>
     </div>
   </div>
@@ -939,6 +961,34 @@ async function loadAccounts() {
     o.textContent = `${a.nome}  (${a.account?.email || ''})`;
     sel.appendChild(o);
   });
+  sel.addEventListener('change', loadFolders);
+}
+
+async function loadFolders() {
+  const acct = document.getElementById('account').value;
+  const sel  = document.getElementById('folder');
+  const hint = document.getElementById('folder-hint');
+  sel.innerHTML = '<option value="INBOX">INBOX</option>';
+  if (!acct) { hint.textContent = 'Select an account to load its real folder list.'; return; }
+  hint.textContent = 'Loading folders…';
+  try {
+    const res  = await fetch('/api/cleanup/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ account: acct }),
+    });
+    const data = await res.json();
+    if (data.error) { hint.textContent = data.error; return; }
+    sel.innerHTML = '';
+    (data.folders || []).forEach(f => {
+      const o = document.createElement('option');
+      o.value = f; o.textContent = f;
+      if (f.toUpperCase() === 'INBOX') o.selected = true;
+      sel.appendChild(o);
+    });
+    hint.textContent = `${data.folders.length} folder(s) found.`;
+  } catch (e) {
+    hint.textContent = 'Could not load folders.';
+  }
 }
 
 function payload() {
@@ -1060,6 +1110,25 @@ def api_save_config():
 @web_app.route('/cleanup')
 def cleanup_page():
     return render_template_string(_CLEANUP_HTML)
+
+@web_app.route('/api/cleanup/folders', methods=['POST'])
+def api_cleanup_folders():
+    body      = request.get_json(silent=True) or {}
+    acct_name = body.get('account', '')
+
+    config   = read_config()
+    acct_cfg = next((a for a in config.get('accounts', []) if a['nome'] == acct_name), None)
+    if not acct_cfg:
+        return jsonify({'error': 'Account not found.'}), 400
+
+    try:
+        conn    = _imap_connect(acct_cfg)
+        folders = _list_folders(conn)
+        conn.logout()
+        return jsonify({'folders': folders})
+    except Exception as exc:
+        _logger.exception('Cleanup folders error: %s', exc)
+        return jsonify({'error': str(exc)}), 500
 
 @web_app.route('/api/cleanup/preview', methods=['POST'])
 def api_cleanup_preview():
