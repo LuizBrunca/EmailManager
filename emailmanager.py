@@ -416,34 +416,34 @@ _BASE_CSS = r"""
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
   :root {
-    --bg:            #0a0c10;
-    --bg-radial:      radial-gradient(1200px 600px at 15% -10%, #10192a 0%, transparent 60%),
-                       radial-gradient(1000px 500px at 110% 10%, #0d1a26 0%, transparent 55%);
-    --card:           linear-gradient(180deg, #12151c 0%, #0f1218 100%);
-    --card-border:    rgba(107,158,214,.16);
-    --card-border-hi: rgba(107,158,214,.34);
-    --elevated:       #0d0f15;
-    --text:           #e7eaf0;
-    --text-muted:     #96a0ae;
-    --text-faint:     #575f6c;
-    --accent:         #5b93d1;
-    --accent-soft:    #a9cbf0;
-    --accent-dim:     rgba(91,147,209,.14);
-    --accent-line:    rgba(91,147,209,.38);
-    --danger:         #b3453f;
-    --danger-strong:  #8f312c;
-    --success:        #6fae7c;
-    --info:           #7fa8c9;
-    --shadow-lg:      0 20px 50px -12px rgba(0,0,0,.65);
-    --shadow-sm:      0 6px 18px rgba(0,0,0,.35);
+    color-scheme: dark;
+    --bg:            #05060a;
+    --card:           #0b0c12;
+    --card-border:    rgba(70,130,200,.22);
+    --card-border-hi: rgba(70,130,200,.42);
+    --elevated:       #060709;
+    --text:           #eef1f6;
+    --text-muted:     #a7b2c2;
+    --text-faint:     #5c6577;
+    --accent:         #3f8ef0;
+    --accent-soft:    #8fc4ff;
+    --accent-dim:     rgba(63,142,240,.16);
+    --accent-line:    rgba(63,142,240,.45);
+    --danger:         #e0554a;
+    --danger-strong:  #b23a30;
+    --success:        #45c17a;
+    --info:           #4fa8e8;
+    --shadow-lg:      0 20px 50px -12px rgba(0,0,0,.75);
+    --shadow-sm:      0 6px 18px rgba(0,0,0,.45);
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  html { color-scheme: dark; }
+
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg) var(--bg-radial);
-    background-attachment: fixed;
+    background: var(--bg);
     color: var(--text);
     min-height: 100vh;
     padding-bottom: 96px;
@@ -451,6 +451,11 @@ _BASE_CSS = r"""
   }
 
   ::selection { background: var(--accent-dim); color: var(--accent-soft); }
+
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: #1c2230; border-radius: 8px; border: 3px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: #29344a; }
 
   /* Topbar */
   .topbar {
@@ -519,20 +524,14 @@ _BASE_CSS = r"""
     letter-spacing: .14em;
     margin-bottom: 20px;
     padding-bottom: 14px;
-    padding-left: 14px;
     border-bottom: 1px solid var(--card-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    position: relative;
   }
-  .card-title::before {
-    content: '';
-    position: absolute; left: 0; top: 1px; bottom: 16px;
-    width: 3px; border-radius: 3px;
-    background: linear-gradient(180deg, var(--accent), transparent);
-  }
+  .title-lead { display: flex; align-items: center; gap: 11px; }
+  .title-bar { width: 3px; height: 22px; min-width: 3px; border-radius: 3px; background: var(--accent); }
   .card-title .title-note {
     font-size: .74rem; font-weight: 400; color: var(--text-faint);
     text-transform: none; letter-spacing: 0;
@@ -541,7 +540,7 @@ _BASE_CSS = r"""
   /* Form */
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
   .form-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
-  .form-row label { font-size: .76rem; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+  .form-row label { font-size: .76rem; font-weight: 600; color: var(--accent-soft); letter-spacing: .02em; }
   .form-row input, .form-row textarea, .form-row select {
     padding: 9px 12px;
     border: 1px solid var(--card-border);
@@ -561,7 +560,7 @@ _BASE_CSS = r"""
   .form-row textarea { resize: vertical; min-height: 68px; line-height: 1.55; }
   .form-row-checkbox { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; cursor: pointer; }
   .form-row-checkbox input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
-  .form-row-checkbox span { font-size: .8rem; font-weight: 500; color: var(--text-muted); }
+  .form-row-checkbox span { font-size: .8rem; font-weight: 500; color: var(--text); }
   .hint { font-size: .72rem; color: var(--text-faint); margin-top: 1px; }
   .span-2 { grid-column: span 2; }
 
@@ -586,19 +585,19 @@ _BASE_CSS = r"""
   .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
   .btn-primary {
-    background: linear-gradient(135deg, #82b0e6, var(--accent) 55%, #3f6ea3);
-    color: #0a0f16;
+    background: var(--accent);
+    color: #04101f;
   }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-primary:hover:not(:disabled) { background: #2f7de0; }
 
   .btn-danger {
-    background: linear-gradient(135deg, #c65852, var(--danger) 65%, var(--danger-strong));
-    color: #fdf1ef;
+    background: var(--danger);
+    color: #200604;
   }
-  .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-danger:hover:not(:disabled) { background: #c8483d; }
 
   .btn-outline {
-    background: transparent;
+    background: rgba(63,142,240,.06);
     color: var(--accent-soft);
     border-color: var(--accent-line);
   }
@@ -610,7 +609,7 @@ _BASE_CSS = r"""
     border-color: transparent;
     padding: 6px 10px;
   }
-  .btn-ghost-danger:hover:not(:disabled) { background: rgba(179,69,63,.12); color: #eab3ae; }
+  .btn-ghost-danger:hover:not(:disabled) { background: rgba(224,85,74,.12); color: #eab3ae; }
 
   .btn-sm { padding: 6px 13px; font-size: .76rem; }
 
@@ -623,8 +622,8 @@ _BASE_CSS = r"""
     display: none;
     border: 1px solid transparent;
   }
-  #status.ok   { background: rgba(111,174,124,.12); color: var(--success); border-color: rgba(111,174,124,.3); display: inline-flex; align-items: center; }
-  #status.err  { background: rgba(179,69,63,.12); color: #e6928c; border-color: rgba(179,69,63,.3); display: inline-flex; align-items: center; }
+  #status.ok   { background: rgba(69,193,122,.12); color: var(--success); border-color: rgba(69,193,122,.3); display: inline-flex; align-items: center; }
+  #status.err  { background: rgba(224,85,74,.12); color: #e6928c; border-color: rgba(224,85,74,.3); display: inline-flex; align-items: center; }
   #status.info { background: rgba(127,168,201,.12); color: var(--info); border-color: rgba(127,168,201,.3); display: inline-flex; align-items: center; }
 
   /* Sticky bottom action bar (shared shape for save-bar / action-bar) */
@@ -718,7 +717,7 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
 <div class="container">
 
   <div class="card">
-    <div class="card-title">General</div>
+    <div class="card-title"><span class="title-lead"><span class="title-bar"></span>General</span></div>
     <div class="form-grid">
       <div class="form-row">
         <label for="interval">Check interval (seconds)</label>
@@ -739,7 +738,7 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
 
   <div class="card">
     <div class="card-title">
-      Email Accounts
+      <span class="title-lead"><span class="title-bar"></span>Email Accounts</span>
       <button class="btn btn-outline btn-sm" onclick="addAccount()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         Add Account
@@ -995,7 +994,7 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
     border: 1px solid var(--accent-line);
   }
   .warn-box {
-    background: rgba(179,69,63,.1); border: 1px solid rgba(179,69,63,.32);
+    background: rgba(224,85,74,.1); border: 1px solid rgba(224,85,74,.32);
     color: #e29d97; border-radius: 8px; padding: 11px 15px;
     font-size: .82rem; margin-top: 4px; margin-bottom: 14px; display: none;
   }
@@ -1014,7 +1013,7 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
 <div class="container">
 
   <div class="card">
-    <div class="card-title">Target</div>
+    <div class="card-title"><span class="title-lead"><span class="title-bar"></span>Target</span></div>
     <div class="form-grid">
       <div class="form-row">
         <label for="account">Account</label>
@@ -1029,7 +1028,7 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <div class="card-title">Filters <span class="title-note">— at least one required, combined with AND</span></div>
+    <div class="card-title"><span class="title-lead"><span class="title-bar"></span>Filters</span> <span class="title-note">— at least one required, combined with AND</span></div>
     <div class="form-grid">
       <div class="form-row span-2">
         <label for="sender">Sender (partial or full)</label>
@@ -1048,7 +1047,7 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
 
   <div id="results-card" class="card" style="display:none">
     <div class="card-title">
-      <span>Results&nbsp;&nbsp;<span class="badge" id="results-count">0</span></span>
+      <span class="title-lead"><span class="title-bar"></span>Results&nbsp;&nbsp;<span class="badge" id="results-count">0</span></span>
       <span class="title-note" id="preview-note"></span>
     </div>
     <div id="warn-box" class="warn-box">
