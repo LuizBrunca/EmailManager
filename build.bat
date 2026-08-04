@@ -3,6 +3,7 @@ echo Building EmailManager...
 pyinstaller --noconsole --onefile --icon=app.ico ^
     --add-data "active.ico;." ^
     --add-data "stopped.ico;." ^
+    --add-data "app.ico;." ^
     --hidden-import flask ^
     --hidden-import werkzeug ^
     --hidden-import werkzeug.serving ^

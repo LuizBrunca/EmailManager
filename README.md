@@ -110,7 +110,7 @@ Double-click `build.bat`, or run manually:
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile --icon=app.ico --add-data "active.ico;." --add-data "stopped.ico;." emailmanager.py
+pyinstaller --noconsole --onefile --icon=app.ico --add-data "active.ico;." --add-data "stopped.ico;." --add-data "app.ico;." emailmanager.py
 ```
 
 Output: `dist\emailmanager.exe`
@@ -127,10 +127,12 @@ Output: `installer_output\EmailManager-Setup-<version>.exe` — installs to `%LO
 
 ## Auto-start with Windows
 
+Open Settings (tray icon → **Settings**) and check **"Start EmailManager automatically when Windows starts"** under General, then **Save & Apply**. This adds a per-user entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; unchecking it removes the entry — no manual shortcut needed.
+
+Alternatively, the installer offers the same behavior as an opt-in task during setup, and it can always be done manually:
+
 1. Press `Win + R`, type `shell:startup`, press Enter
 2. Create a shortcut to `emailmanager.exe` in that folder
-
-The app will launch automatically on every login.
 
 ---
 

@@ -3,15 +3,15 @@ from __future__ import annotations
 from ezmail import EzReader, EzMail  # type: ignore
 from subprocess import run, STARTUPINFO, STARTF_USESHOWWINDOW, CREATE_NO_WINDOW
 from typing import Any
-import threading, sys, os, webbrowser, json, logging, imaplib, ssl
+import threading, sys, os, webbrowser, json, logging, imaplib, ssl, winreg
 from logging.handlers import RotatingFileHandler
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timedelta as _timedelta
 import email as _email_mod
 from email.header import decode_header as _hdr_decode
 from pystray import Icon, MenuItem, Menu # type: ignore
 from PIL import Image
 from re import findall, compile as _re_compile
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, send_file
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 CONFIG_DIR  = os.path.join(os.environ.get('PROGRAMDATA', r'C:\ProgramData'), 'EmailManager')
@@ -45,7 +45,13 @@ logging.getLogger('werkzeug').setLevel(logging.ERROR)
 web_app = Flask(__name__)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-_DEFAULT_CONFIG: dict[str, Any] = {'interval': 30, 'notifications_enabled': True, 'accounts': []}
+_DEFAULT_CONFIG: dict[str, Any] = {
+    'interval': 30,
+    'notifications_enabled': True,
+    'start_with_windows': False,
+    'notify_max_age_days': 5,
+    'accounts': [],
+}
 
 def ensure_config_dir() -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -66,6 +72,31 @@ def write_config(config: dict[str, Any]) -> None:
     ensure_config_dir()
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+
+# ── Start with Windows ────────────────────────────────────────────────────────
+_RUN_KEY_PATH   = r'Software\Microsoft\Windows\CurrentVersion\Run'
+_RUN_VALUE_NAME = 'EmailManager'
+
+def set_start_with_windows(enabled: bool) -> None:
+    """Add/remove the per-user autostart entry (HKCU\\...\\Run) for this app."""
+    try:
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY_PATH)
+    except OSError as exc:
+        _logger.exception('Could not open Run registry key: %s', exc)
+        return
+    try:
+        if enabled:
+            exe_path = sys.executable if IS_FROZEN else os.path.abspath(__file__)
+            winreg.SetValueEx(key, _RUN_VALUE_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+            _logger.info('Start-with-Windows enabled (%s)', exe_path)
+        else:
+            try:
+                winreg.DeleteValue(key, _RUN_VALUE_NAME)
+            except FileNotFoundError:
+                pass
+            _logger.info('Start-with-Windows disabled')
+    finally:
+        winreg.CloseKey(key)
 
 def build_readers(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
     accounts = config.get('accounts', [])
@@ -213,11 +244,23 @@ $notifier.Show($toast)
         creationflags=CREATE_NO_WINDOW,
     )
 
+def _within_notify_window(date: _dt | None, max_age_days: int) -> bool:
+    """True if the email is recent enough to warrant a notification.
+
+    Mailboxes can carry days/weeks of unread backlog (first run, a stretch
+    offline, etc.) — without this, EmailManager would fire a notification
+    for every one of them at once. 0 disables the limit."""
+    if not date or max_age_days <= 0:
+        return True
+    now = _dt.now(date.tzinfo) if date.tzinfo else _dt.now()
+    return (now - date) <= _timedelta(days=max_age_days)
+
 # ── Email processing ───────────────────────────────────────────────────────────
 def process_account(
     name: str, reader: EzReader, url: str,
     black_list: list[str], white_list: list[str], important_list: list[str],
     notify_enabled: bool = True, notify_non_important: bool = True,
+    notify_max_age_days: int = 5,
 ) -> None:
     _logger.debug('Checking account: %s', name)
     try:
@@ -227,6 +270,7 @@ def process_account(
             for email in emails:
                 sender = findall(r"<(.*?)>", email.sender)[0] if '<' in email.sender else email.sender
                 _logger.debug('[%s] Processing — from: %s | subject: %s', name, sender, email.subject)
+                recent = _within_notify_window(email.date, notify_max_age_days)
 
                 if any(b in sender for b in black_list):
                     _logger.info('[%s] BLACKLISTED — trashed: %s', name, sender)
@@ -238,9 +282,11 @@ def process_account(
                     body = email.body.lower()
                     if ' code ' in body or ' código ' in body:
                         message += f'\nBody: {email.body.replace(chr(10), " ")}'
-                    _logger.info('[%s] IMPORTANT — notifying (left unread): %s', name, sender)
-                    if notify_enabled:
+                    if notify_enabled and recent:
+                        _logger.info('[%s] IMPORTANT — notifying (left unread): %s', name, sender)
                         notify(f'New email — {name}', message, url)
+                    else:
+                        _logger.info('[%s] IMPORTANT — too old to notify, left unread: %s', name, sender)
                     continue  # intentionally NOT marking as read
 
                 if white_list and not any(w in sender for w in white_list):
@@ -253,9 +299,11 @@ def process_account(
                 if ' code ' in body or ' código ' in body:
                     message += f'\nBody: {email.body.replace(chr(10), " ")}'
 
-                _logger.info('[%s] NOTIFYING — from: %s | subject: %s', name, sender, email.subject)
-                if notify_enabled and notify_non_important:
+                if notify_enabled and notify_non_important and recent:
+                    _logger.info('[%s] NOTIFYING — from: %s | subject: %s', name, sender, email.subject)
                     notify(f'New email — {name}', message, url)
+                else:
+                    _logger.info('[%s] READ (no notify) — from: %s | subject: %s', name, sender, email.subject)
                 r.mark_as_read(email)
     except Exception as exc:
         _logger.exception('[%s] Error: %s — %s', name, type(exc).__name__, exc)
@@ -270,6 +318,7 @@ def _background_loop(event: threading.Event) -> None:
     try:
         config = read_config()
         readers, interval = build_readers(config)
+        notify_max_age_days = int(config.get('notify_max_age_days', 5))
     except Exception as exc:
         _logger.exception('Could not load config: %s', exc)
         notify('EmailManager', f'Could not load config: {exc}')
@@ -291,6 +340,7 @@ def _background_loop(event: threading.Event) -> None:
                 account['name'], account['reader'],
                 account['url'], account['black_list'], account['white_list'], account['important_list'],
                 account['notify'], account['notify_non_important'],
+                notify_max_age_days,
             )
         event.wait(interval)
     _logger.info('Background loop stopped')
@@ -361,6 +411,259 @@ def on_exit(tray: Icon, _item: MenuItem) -> None:
     tray.stop()
     os._exit(0)
 
+# ── Shared design system ─────────────────────────────────────────────────────
+_BASE_CSS = r"""
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  :root {
+    --bg:            #0a0c10;
+    --bg-radial:      radial-gradient(1200px 600px at 15% -10%, #10192a 0%, transparent 60%),
+                       radial-gradient(1000px 500px at 110% 10%, #0d1a26 0%, transparent 55%);
+    --card:           linear-gradient(180deg, #12151c 0%, #0f1218 100%);
+    --card-border:    rgba(107,158,214,.16);
+    --card-border-hi: rgba(107,158,214,.34);
+    --elevated:       #0d0f15;
+    --text:           #e7eaf0;
+    --text-muted:     #96a0ae;
+    --text-faint:     #575f6c;
+    --accent:         #5b93d1;
+    --accent-soft:    #a9cbf0;
+    --accent-dim:     rgba(91,147,209,.14);
+    --accent-line:    rgba(91,147,209,.38);
+    --danger:         #b3453f;
+    --danger-strong:  #8f312c;
+    --success:        #6fae7c;
+    --info:           #7fa8c9;
+    --shadow-lg:      0 20px 50px -12px rgba(0,0,0,.65);
+    --shadow-sm:      0 6px 18px rgba(0,0,0,.35);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg) var(--bg-radial);
+    background-attachment: fixed;
+    color: var(--text);
+    min-height: 100vh;
+    padding-bottom: 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent-dim); color: var(--accent-soft); }
+
+  /* Topbar */
+  .topbar {
+    background: rgba(10,11,15,.72);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border-bottom: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .topbar .brand { display: flex; align-items: center; gap: 10px; }
+  .topbar .brand svg { color: var(--accent); flex-shrink: 0; }
+  .topbar h1 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: .01em;
+    color: var(--text);
+  }
+  .topnav { display: flex; gap: 22px; margin-left: 30px; }
+  .topnav-link {
+    position: relative;
+    padding: 4px 2px 14px;
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    text-decoration: none;
+    transition: color .18s;
+  }
+  .topnav-link::after {
+    content: '';
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 2px; border-radius: 2px;
+    background: var(--accent);
+    transform: scaleX(0);
+    transition: transform .2s ease;
+  }
+  .topnav-link:hover  { color: var(--text-muted); }
+  .topnav-link.active { color: var(--accent-soft); }
+  .topnav-link.active::after { transform: scaleX(1); }
+
+  .container { max-width: 860px; margin: 40px auto; padding: 0 20px; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 26px 28px;
+    margin-bottom: 22px;
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow-lg);
+    position: relative;
+  }
+  .card-title {
+    font-size: .74rem;
+    font-weight: 700;
+    color: var(--accent-soft);
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+    padding-left: 14px;
+    border-bottom: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: relative;
+  }
+  .card-title::before {
+    content: '';
+    position: absolute; left: 0; top: 1px; bottom: 16px;
+    width: 3px; border-radius: 3px;
+    background: linear-gradient(180deg, var(--accent), transparent);
+  }
+  .card-title .title-note {
+    font-size: .74rem; font-weight: 400; color: var(--text-faint);
+    text-transform: none; letter-spacing: 0;
+  }
+
+  /* Form */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+  .form-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .form-row label { font-size: .76rem; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+  .form-row input, .form-row textarea, .form-row select {
+    padding: 9px 12px;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    font-size: .87rem;
+    color: var(--text);
+    font-family: inherit;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+    background: var(--elevated);
+  }
+  .form-row input:focus, .form-row textarea:focus, .form-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .form-row select option { background: #14161f; }
+  .form-row textarea { resize: vertical; min-height: 68px; line-height: 1.55; }
+  .form-row-checkbox { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; cursor: pointer; }
+  .form-row-checkbox input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .form-row-checkbox span { font-size: .8rem; font-weight: 500; color: var(--text-muted); }
+  .hint { font-size: .72rem; color: var(--text-faint); margin-top: 1px; }
+  .span-2 { grid-column: span 2; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: .82rem;
+    font-weight: 600;
+    letter-spacing: .01em;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background .18s, border-color .18s, opacity .15s, transform .1s;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .btn svg { flex-shrink: 0; }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #82b0e6, var(--accent) 55%, #3f6ea3);
+    color: #0a0f16;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+
+  .btn-danger {
+    background: linear-gradient(135deg, #c65852, var(--danger) 65%, var(--danger-strong));
+    color: #fdf1ef;
+  }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--accent-soft);
+    border-color: var(--accent-line);
+  }
+  .btn-outline:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--accent); }
+
+  .btn-ghost-danger {
+    background: transparent;
+    color: #d59892;
+    border-color: transparent;
+    padding: 6px 10px;
+  }
+  .btn-ghost-danger:hover:not(:disabled) { background: rgba(179,69,63,.12); color: #eab3ae; }
+
+  .btn-sm { padding: 6px 13px; font-size: .76rem; }
+
+  /* Status pill */
+  #status {
+    font-size: .8rem;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 999px;
+    display: none;
+    border: 1px solid transparent;
+  }
+  #status.ok   { background: rgba(111,174,124,.12); color: var(--success); border-color: rgba(111,174,124,.3); display: inline-flex; align-items: center; }
+  #status.err  { background: rgba(179,69,63,.12); color: #e6928c; border-color: rgba(179,69,63,.3); display: inline-flex; align-items: center; }
+  #status.info { background: rgba(127,168,201,.12); color: var(--info); border-color: rgba(127,168,201,.3); display: inline-flex; align-items: center; }
+
+  /* Sticky bottom action bar (shared shape for save-bar / action-bar) */
+  /* All bottom-bar controls are always centered as a group — a lone or a
+     paired button set should sit in the visual middle, never hug an edge.
+     Meta text (if any) is anchored to the right independently so it never
+     throws the centering off. */
+  .bottom-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(13,14,20,.82);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border-top: 1px solid var(--card-border);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    box-shadow: 0 -10px 30px rgba(0,0,0,.35);
+    z-index: 100;
+  }
+  .bottom-bar .bar-actions { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .bottom-bar .bar-meta {
+    position: absolute; right: 32px; top: 50%; transform: translateY(-50%);
+    font-size: .74rem; color: var(--text-faint); text-align: right;
+  }
+  .bottom-bar .bar-meta code { font-size: .73rem; color: var(--accent-soft); }
+
+  @media (max-width: 560px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .span-2 { grid-column: span 1; }
+    .bottom-bar { flex-direction: column; align-items: stretch; }
+    .bottom-bar .bar-meta { position: static; transform: none; text-align: center; }
+  }
+"""
+
+_BRAND_SVG = r"""<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 12 13l9-6.5"/><rect x="3" y="5" width="18" height="14" rx="2.5"/></svg>"""
+
 # ── Settings page ──────────────────────────────────────────────────────────────
 _SETTINGS_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -368,176 +671,44 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EmailManager — Settings</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0f172a;
-    color: #e2e8f0;
-    min-height: 100vh;
-    padding-bottom: 80px;
-  }
-
-  .topbar {
-    background: #1e3a8a;
-    color: #fff;
-    padding: 14px 28px;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.5);
-    position: sticky;
-    top: 0;
-    z-index: 50;
-  }
-  .topbar h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .03em; }
-  .topnav { display: flex; gap: 4px; margin-left: 20px; }
-  .topnav-link {
-    padding: 4px 14px; border-radius: 6px; font-size: .82rem; font-weight: 500;
-    color: rgba(255,255,255,.65); text-decoration: none; transition: background .15s, color .15s;
-  }
-  .topnav-link:hover  { background: rgba(255,255,255,.1); color: #fff; }
-  .topnav-link.active { background: rgba(255,255,255,.18); color: #fff; }
-
-  .container { max-width: 800px; margin: 28px auto; padding: 0 16px; }
-
-  .card {
-    background: #1e293b;
-    border-radius: 12px;
-    padding: 22px 24px;
-    margin-bottom: 20px;
-    border: 1px solid #334155;
-    box-shadow: 0 4px 16px rgba(0,0,0,.3);
-  }
-  .card-title {
-    font-size: .9rem;
-    font-weight: 700;
-    color: #60a5fa;
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    margin-bottom: 18px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #334155;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
-  .form-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-  .form-row label { font-size: .8rem; font-weight: 600; color: #94a3b8; }
-  .form-row input, .form-row textarea {
-    padding: 8px 11px;
-    border: 1.5px solid #334155;
-    border-radius: 8px;
-    font-size: .88rem;
-    color: #e2e8f0;
-    font-family: inherit;
-    transition: border-color .15s, box-shadow .15s;
-    background: #0f172a;
-  }
-  .form-row input:focus, .form-row textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59,130,246,.18);
-  }
-  .form-row textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
-  .form-row-checkbox { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; cursor: pointer; }
-  .form-row-checkbox input[type=checkbox] { width: 16px; height: 16px; accent-color: #3b82f6; cursor: pointer; flex-shrink: 0; }
-  .form-row-checkbox span { font-size: .8rem; font-weight: 600; color: #94a3b8; }
-  .hint { font-size: .72rem; color: #475569; margin-top: 2px; }
-  .span-2 { grid-column: span 2; }
+""" + _BASE_CSS + r"""
 
   /* Account cards */
   .acct-card {
-    border: 1.5px solid #334155;
-    border-radius: 10px;
+    border: 1px solid var(--card-border);
+    border-radius: 11px;
     margin-bottom: 12px;
     overflow: hidden;
     transition: border-color .15s;
+    background: var(--elevated);
   }
-  .acct-card:hover { border-color: #475569; }
+  .acct-card:hover { border-color: var(--card-border-hi); }
 
   .acct-header {
     display: flex;
     align-items: center;
-    padding: 11px 14px;
-    background: #0f172a;
+    padding: 13px 16px;
     cursor: pointer;
     user-select: none;
     gap: 10px;
   }
-  .acct-header:hover { background: #1e293b; }
-  .acct-name  { font-weight: 600; font-size: .9rem; flex: 1; color: #f1f5f9; }
-  .acct-email { font-size: .78rem; color: #64748b; }
-  .chevron { transition: transform .2s; color: #475569; flex-shrink: 0; }
+  .acct-header:hover { background: rgba(91,147,209,.06); }
+  .acct-name  { font-weight: 600; font-size: .89rem; flex: 1; color: var(--text); }
+  .acct-email { font-size: .78rem; color: var(--text-faint); }
+  .chevron { transition: transform .2s; color: var(--accent); flex-shrink: 0; }
   .chevron.open { transform: rotate(180deg); }
 
-  .acct-body { padding: 16px; display: none; background: #1e293b; }
+  .acct-body { padding: 4px 18px 18px; display: none; }
   .acct-body.open { display: block; }
-  .acct-footer { display: flex; justify-content: flex-end; padding-top: 6px; }
-
-  .add-row { display: flex; justify-content: flex-end; margin-top: 6px; }
-
-  /* Buttons */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: .85rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: none;
-    transition: background .15s, opacity .15s;
-    font-family: inherit;
-  }
-  .btn:active { opacity: .8; }
-  .btn-primary  { background: #2563eb; color: #fff; }
-  .btn-primary:hover  { background: #1d4ed8; }
-  .btn-danger   { background: #b91c1c; color: #fff; }
-  .btn-danger:hover   { background: #991b1b; }
-  .btn-outline  { background: transparent; color: #60a5fa; border: 1.5px solid #1d4ed8; }
-  .btn-outline:hover  { background: #1e3a8a33; }
-  .btn-sm { padding: 5px 12px; font-size: .78rem; }
-
-  /* Save bar */
-  .save-bar {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    background: #1e293b;
-    border-top: 1px solid #334155;
-    padding: 12px 28px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    box-shadow: 0 -4px 16px rgba(0,0,0,.4);
-    z-index: 100;
-  }
-  .save-bar .note { font-size: .78rem; color: #475569; margin-left: auto; }
-
-  #status {
-    font-size: .82rem;
-    font-weight: 600;
-    padding: 6px 13px;
-    border-radius: 6px;
-    display: none;
-  }
-  #status.ok  { background: #14532d; color: #86efac; display: inline-block; }
-  #status.err { background: #7f1d1d; color: #fca5a5; display: inline-block; }
-
-  @media (max-width: 560px) {
-    .form-grid { grid-template-columns: 1fr; }
-    .span-2 { grid-column: span 1; }
-  }
+  .acct-footer { display: flex; justify-content: flex-end; padding-top: 4px; border-top: 1px dashed var(--card-border); margin-top: 4px; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <h1>EmailManager</h1>
+  <div class="brand">""" + _BRAND_SVG + r"""<h1>EmailManager</h1></div>
   <nav class="topnav">
     <a href="/" class="topnav-link active">Settings</a>
     <a href="/cleanup" class="topnav-link">Cleanup</a>
@@ -548,32 +719,49 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
 
   <div class="card">
     <div class="card-title">General</div>
-    <div style="max-width:220px">
+    <div class="form-grid">
       <div class="form-row">
         <label for="interval">Check interval (seconds)</label>
         <input type="number" id="interval" min="10" step="5" value="30">
         <span class="hint">Minimum: 10 seconds</span>
       </div>
+      <div class="form-row">
+        <label for="notify_max_age_days">Only notify unread mail received in the last (days)</label>
+        <input type="number" id="notify_max_age_days" min="0" step="1" value="5">
+        <span class="hint">Prevents a flood of notifications for old unread mail. 0 = no limit.</span>
+      </div>
     </div>
+    <label class="form-row-checkbox" style="margin-top:2px">
+      <input type="checkbox" id="start_with_windows">
+      <span>Start EmailManager automatically when Windows starts</span>
+    </label>
   </div>
 
   <div class="card">
     <div class="card-title">
       Email Accounts
-      <button class="btn btn-outline btn-sm" onclick="addAccount()">+ Add Account</button>
+      <button class="btn btn-outline btn-sm" onclick="addAccount()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Add Account
+      </button>
     </div>
     <div id="accounts-list"></div>
-    <div id="no-accounts" style="text-align:center;padding:24px 0;color:#94a3b8;font-size:.88rem;display:none">
-      No accounts configured. Click "+ Add Account" to get started.
+    <div id="no-accounts" style="text-align:center;padding:30px 0;color:var(--text-faint);font-size:.86rem;display:none">
+      No accounts configured. Click "Add Account" to get started.
     </div>
   </div>
 
 </div>
 
-<div class="save-bar">
-  <button class="btn btn-primary" onclick="saveSettings()">Save &amp; Apply</button>
-  <span id="status"></span>
-  <span class="note">Log: <code style="font-size:.75rem;color:#60a5fa">{{ log_path }}</code> &nbsp;·&nbsp; Saving restarts monitoring.</span>
+<div class="bottom-bar">
+  <div class="bar-actions">
+    <button class="btn btn-primary" onclick="saveSettings()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+      Save &amp; Apply
+    </button>
+    <span id="status"></span>
+  </div>
+  <span class="bar-meta">Log: <code>{{ log_path }}</code><br>Saving restarts monitoring.</span>
 </div>
 
 <template id="acct-tpl">
@@ -602,7 +790,7 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
         </label>
         <div class="form-row">
           <label>URL to open on notification</label>
-          <input type="url" name="url" placeholder="https://mail.google.com">
+          <input type="url" name="url" placeholder="https://mail.google.com" value="https://mail.google.com">
           <span class="hint">Opened when clicking a toast notification.</span>
         </div>
         <div class="form-row">
@@ -615,7 +803,7 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="form-row">
           <label>IMAP server</label>
-          <input type="text" name="imap_server" placeholder="imap.gmail.com">
+          <input type="text" name="imap_server" placeholder="imap.gmail.com" value="imap.gmail.com">
         </div>
         <div class="form-row">
           <label>IMAP port</label>
@@ -636,13 +824,16 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
           <span class="hint">One sender per line. If set, only these senders trigger notifications.</span>
         </div>
         <div class="form-row span-2">
-          <label style="color:#f59e0b">Importants</label>
-          <textarea name="important_list" placeholder="ceo@company.com&#10;@vip-domain.com" style="border-color:#92400e"></textarea>
+          <label style="color:var(--accent-soft)">Importants</label>
+          <textarea name="important_list" placeholder="ceo@company.com&#10;@vip-domain.com" style="border-color:var(--accent-line)"></textarea>
           <span class="hint">One sender per line. These always trigger notifications and the email is <strong>left unread</strong> until you read it manually.</span>
         </div>
       </div>
       <div class="acct-footer">
-        <button class="btn btn-danger btn-sm" onclick="removeAcct(this)">Remove Account</button>
+        <button class="btn btn-ghost-danger btn-sm" onclick="removeAcct(this)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+          Remove Account
+        </button>
       </div>
     </div>
   </div>
@@ -731,6 +922,8 @@ async function loadConfig() {
   const res    = await fetch('/api/config');
   const config = await res.json();
   document.getElementById('interval').value = config.interval || 30;
+  document.getElementById('notify_max_age_days').value = config.notify_max_age_days ?? 5;
+  document.getElementById('start_with_windows').checked = !!config.start_with_windows;
   (config.accounts || []).forEach(appendCard);
   syncEmpty();
 }
@@ -738,6 +931,8 @@ async function loadConfig() {
 async function saveSettings() {
   const payload = {
     interval: parseInt(document.getElementById('interval').value) || 30,
+    notify_max_age_days: parseInt(document.getElementById('notify_max_age_days').value) || 0,
+    start_with_windows: document.getElementById('start_with_windows').checked,
     accounts: Array.from(document.querySelectorAll('.acct-card')).map(readCard),
   };
 
@@ -779,108 +974,37 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EmailManager — Cleanup</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0f172a; color: #e2e8f0; min-height: 100vh; padding-bottom: 80px;
-  }
-  .topbar {
-    background: #1e3a8a; color: #fff; padding: 14px 28px;
-    display: flex; align-items: center; gap: 10px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.5); position: sticky; top: 0; z-index: 50;
-  }
-  .topbar h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .03em; }
-  .topnav { display: flex; gap: 4px; margin-left: 20px; }
-  .topnav-link {
-    padding: 4px 14px; border-radius: 6px; font-size: .82rem; font-weight: 500;
-    color: rgba(255,255,255,.65); text-decoration: none; transition: background .15s, color .15s;
-  }
-  .topnav-link:hover  { background: rgba(255,255,255,.1); color: #fff; }
-  .topnav-link.active { background: rgba(255,255,255,.18); color: #fff; }
-  .container { max-width: 900px; margin: 28px auto; padding: 0 16px; }
-  .card {
-    background: #1e293b; border-radius: 12px; padding: 22px 24px;
-    margin-bottom: 20px; border: 1px solid #334155;
-    box-shadow: 0 4px 16px rgba(0,0,0,.3);
-  }
-  .card-title {
-    font-size: .9rem; font-weight: 700; color: #60a5fa;
-    text-transform: uppercase; letter-spacing: .06em;
-    margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #334155;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
-  .form-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-  .form-row label { font-size: .8rem; font-weight: 600; color: #94a3b8; }
-  .form-row input, .form-row select {
-    padding: 8px 11px; border: 1.5px solid #334155; border-radius: 8px;
-    font-size: .88rem; color: #e2e8f0; font-family: inherit;
-    background: #0f172a; transition: border-color .15s, box-shadow .15s;
-  }
-  .form-row input:focus, .form-row select:focus {
-    outline: none; border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59,130,246,.18);
-  }
-  .form-row select option { background: #1e293b; }
-  .hint { font-size: .72rem; color: #475569; margin-top: 2px; }
-  .span-2 { grid-column: span 2; }
+""" + _BASE_CSS + r"""
+
   /* Results table */
-  .results-wrap { overflow-x: auto; margin-top: 4px; }
+  .results-wrap { overflow-x: auto; margin-top: 4px; border-radius: 8px; }
   table { width: 100%; border-collapse: collapse; font-size: .82rem; }
   thead th {
-    text-align: left; padding: 8px 10px; font-weight: 600;
-    color: #64748b; border-bottom: 1px solid #334155;
-    text-transform: uppercase; font-size: .72rem; letter-spacing: .05em;
+    text-align: left; padding: 9px 12px; font-weight: 600;
+    color: var(--text-faint); border-bottom: 1px solid var(--card-border);
+    text-transform: uppercase; font-size: .7rem; letter-spacing: .08em;
   }
-  tbody tr { border-bottom: 1px solid #1e293b; }
-  tbody tr:hover { background: #0f172a; }
-  tbody td { padding: 7px 10px; color: #cbd5e1; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid rgba(255,255,255,.04); }
+  tbody tr:hover { background: rgba(91,147,209,.05); }
+  tbody td { padding: 8px 12px; color: var(--text-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge {
-    display: inline-block; padding: 2px 8px; border-radius: 999px;
-    font-size: .72rem; font-weight: 700; background: #172554; color: #93c5fd;
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: .72rem; font-weight: 700; background: var(--accent-dim); color: var(--accent-soft);
+    border: 1px solid var(--accent-line);
   }
-  /* Buttons */
-  .btn {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 8px 18px; border-radius: 8px; font-size: .85rem;
-    font-weight: 500; cursor: pointer; border: none;
-    transition: background .15s, opacity .15s; font-family: inherit;
-  }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn-outline { background: transparent; color: #60a5fa; border: 1.5px solid #1d4ed8; }
-  .btn-outline:hover:not(:disabled) { background: #1e3a8a33; }
-  .btn-danger  { background: #b91c1c; color: #fff; }
-  .btn-danger:hover:not(:disabled)  { background: #991b1b; }
-  /* Action bar */
-  .action-bar {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: #1e293b; border-top: 1px solid #334155;
-    padding: 12px 28px; display: flex; align-items: center; gap: 14px;
-    box-shadow: 0 -4px 16px rgba(0,0,0,.4); z-index: 100;
-  }
-  #status {
-    font-size: .82rem; font-weight: 600; padding: 6px 13px;
-    border-radius: 6px; display: none;
-  }
-  #status.ok  { background: #14532d; color: #86efac; display: inline-block; }
-  #status.err { background: #7f1d1d; color: #fca5a5; display: inline-block; }
-  #status.info { background: #1e3a8a; color: #93c5fd; display: inline-block; }
   .warn-box {
-    background: #431407; border: 1px solid #7c2d12;
-    color: #fb923c; border-radius: 8px; padding: 10px 14px;
-    font-size: .82rem; margin-top: 4px; display: none;
-  }
-  @media (max-width: 560px) {
-    .form-grid { grid-template-columns: 1fr; }
-    .span-2 { grid-column: span 1; }
+    background: rgba(179,69,63,.1); border: 1px solid rgba(179,69,63,.32);
+    color: #e29d97; border-radius: 8px; padding: 11px 15px;
+    font-size: .82rem; margin-top: 4px; margin-bottom: 14px; display: none;
   }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <h1>EmailManager</h1>
+  <div class="brand">""" + _BRAND_SVG + r"""<h1>EmailManager</h1></div>
   <nav class="topnav">
     <a href="/" class="topnav-link">Settings</a>
     <a href="/cleanup" class="topnav-link active">Cleanup</a>
@@ -905,7 +1029,7 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <div class="card-title">Filters <span style="font-size:.75rem;font-weight:400;color:#475569;text-transform:none;letter-spacing:0">— at least one required, combined with AND</span></div>
+    <div class="card-title">Filters <span class="title-note">— at least one required, combined with AND</span></div>
     <div class="form-grid">
       <div class="form-row span-2">
         <label for="sender">Sender (partial or full)</label>
@@ -924,8 +1048,8 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
 
   <div id="results-card" class="card" style="display:none">
     <div class="card-title">
-      Results &nbsp;<span class="badge" id="results-count">0</span>
-      <span style="font-size:.75rem;font-weight:400;color:#475569;text-transform:none;letter-spacing:0" id="preview-note"></span>
+      <span>Results&nbsp;&nbsp;<span class="badge" id="results-count">0</span></span>
+      <span class="title-note" id="preview-note"></span>
     </div>
     <div id="warn-box" class="warn-box">
       ⚠ Deletion is permanent and cannot be undone.
@@ -940,12 +1064,18 @@ _CLEANUP_HTML = r"""<!DOCTYPE html>
 
 </div>
 
-<div class="action-bar">
-  <button class="btn btn-outline" id="preview-btn" onclick="doPreview()">Preview</button>
-  <button class="btn btn-danger" id="delete-btn" style="display:none" onclick="doDelete()">
-    Delete <span id="delete-count">0</span> emails permanently
-  </button>
-  <span id="status"></span>
+<div class="bottom-bar">
+  <div class="bar-actions">
+    <button class="btn btn-outline" id="preview-btn" onclick="doPreview()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      Preview
+    </button>
+    <button class="btn btn-danger" id="delete-btn" style="display:none" onclick="doDelete()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+      Delete <span id="delete-count">0</span> emails permanently
+    </button>
+    <span id="status"></span>
+  </div>
 </div>
 
 <script>
@@ -1085,6 +1215,10 @@ loadAccounts();
 </html>"""
 
 # ── Flask routes ───────────────────────────────────────────────────────────────
+@web_app.route('/favicon.ico')
+def favicon():
+    return send_file(os.path.join(BASE_DIR, 'app.ico'), mimetype='image/vnd.microsoft.icon')
+
 @web_app.route('/')
 def index():
     return render_template_string(_SETTINGS_HTML, log_path=LOG_PATH)
@@ -1102,6 +1236,7 @@ def api_save_config():
         if 'notifications_enabled' not in data:
             data['notifications_enabled'] = read_config().get('notifications_enabled', True)
         write_config(data)
+        set_start_with_windows(bool(data.get('start_with_windows', False)))
         threading.Thread(target=_restart, daemon=True).start()
         return jsonify({'ok': True})
     except Exception as exc:
@@ -1221,7 +1356,9 @@ if __name__ == '__main__':
     _logger.info('═' * 50)
     _logger.info('EmailManager starting — log: %s', LOG_PATH)
     first_run = not os.path.exists(CONFIG_PATH)
-    _notifications_enabled = read_config().get('notifications_enabled', True)
+    _startup_config = read_config()
+    _notifications_enabled = _startup_config.get('notifications_enabled', True)
+    set_start_with_windows(bool(_startup_config.get('start_with_windows', False)))
 
     flask_thread = threading.Thread(target=_run_flask, daemon=True)
     flask_thread.start()
