@@ -7,6 +7,7 @@ import threading, sys, os, webbrowser, json, logging, imaplib, ssl, winreg
 from logging.handlers import RotatingFileHandler
 from datetime import datetime as _dt, timedelta as _timedelta
 import email as _email_mod
+import email.policy
 from email.header import decode_header as _hdr_decode
 from pystray import Icon, MenuItem, Menu # type: ignore
 from PIL import Image
@@ -132,7 +133,11 @@ def _imap_connect(acct_cfg: dict) -> imaplib.IMAP4_SSL:
 def _decode_hdr(raw: Any) -> str:
     if raw is None:
         return ''
-    parts = _hdr_decode(raw) if isinstance(raw, str) else _hdr_decode(raw.decode('utf-8', 'replace'))
+    # msg.get(...) can hand back str, bytes, or (for headers containing raw
+    # non-ASCII bytes without proper RFC2047 encoding) an email.header.Header
+    # instance — str() on any of those yields the right text to feed decode_header.
+    text = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else str(raw)
+    parts = _hdr_decode(text)
     out = ''
     for part, enc in parts:
         out += part.decode(enc or 'utf-8', 'replace') if isinstance(part, bytes) else str(part)
@@ -179,7 +184,7 @@ def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200)
             _logger.warning('Cleanup preview: could not find UID in FETCH response line: %r', info)
             continue
         try:
-            msg = _email_mod.message_from_bytes(item[1])
+            msg = _email_mod.message_from_bytes(item[1], policy=email.policy.default)
             preview.append({
                 'uid':     m.group(1),
                 'from':    _decode_hdr(msg.get('From', '')),
