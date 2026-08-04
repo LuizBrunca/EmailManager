@@ -151,22 +151,43 @@ def _build_criteria(sender: str, date_from: str, date_to: str) -> str:
         parts.append(f'BEFORE {_imap_date(date_to)}')
     return '(' + (' '.join(parts) if parts else 'ALL') + ')'
 
+_UID_RE = _re_compile(r'UID (\d+)')
+
 def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200) -> list[dict]:
+    """Fetch headers for the given UIDs in a single batched IMAP command.
+
+    Fetching one UID per round-trip made this take minutes on mailboxes with
+    a large backlog (and silently dropped rows whenever a single round-trip
+    failed). A single FETCH covering the whole UID set is both far faster
+    and doesn't discard everything if the server hiccups on one message."""
+    subset = uids[:limit]
+    if not subset:
+        return []
+
+    try:
+        _, raw = conn.uid('fetch', b','.join(subset), '(UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+    except Exception as exc:
+        _logger.exception('Cleanup preview: batch fetch failed — %s', exc)
+        return []
+
     preview = []
-    for uid in uids[:limit]:
+    for item in raw:
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        info = item[0].decode('utf-8', 'replace') if isinstance(item[0], bytes) else str(item[0])
+        m = _UID_RE.search(info)
+        if not m:
+            continue
         try:
-            _, raw = conn.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
-            if not raw or not raw[0]:
-                continue
-            msg = _email_mod.message_from_bytes(raw[0][1])
+            msg = _email_mod.message_from_bytes(item[1])
             preview.append({
-                'uid':     uid.decode(),
+                'uid':     m.group(1),
                 'from':    _decode_hdr(msg.get('From', '')),
                 'subject': _decode_hdr(msg.get('Subject', '(no subject)')),
                 'date':    msg.get('Date', ''),
             })
         except Exception:
-            pass
+            _logger.debug('Cleanup preview: could not parse one message header', exc_info=True)
     return preview
 
 def _imap_folder(folder: str) -> str:
