@@ -1,5 +1,5 @@
 #define MyAppName "EmailManager"
-#define MyAppVersion "1.7.2"
+#define MyAppVersion "1.7.3"
 #define MyAppPublisher "Luiz Brunca"
 #define MyAppURL "https://github.com/LuizBrunca/EmailManager"
 #define MyAppExeName "emailmanager.exe"

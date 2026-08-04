@@ -164,11 +164,10 @@ def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200)
     if not subset:
         return []
 
-    try:
-        _, raw = conn.uid('fetch', b','.join(subset), '(UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
-    except Exception as exc:
-        _logger.exception('Cleanup preview: batch fetch failed — %s', exc)
-        return []
+    status, raw = conn.uid('fetch', b','.join(subset), '(UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+    _logger.debug('Cleanup preview: fetch status=%s, %d raw response item(s): %r', status, len(raw or []), raw)
+    if status != 'OK':
+        raise RuntimeError(f'IMAP FETCH failed (status={status}): {raw!r}')
 
     preview = []
     for item in raw:
@@ -177,6 +176,7 @@ def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200)
         info = item[0].decode('utf-8', 'replace') if isinstance(item[0], bytes) else str(item[0])
         m = _UID_RE.search(info)
         if not m:
+            _logger.warning('Cleanup preview: could not find UID in FETCH response line: %r', info)
             continue
         try:
             msg = _email_mod.message_from_bytes(item[1])
@@ -187,7 +187,14 @@ def _fetch_preview(conn: imaplib.IMAP4_SSL, uids: list[bytes], limit: int = 200)
                 'date':    msg.get('Date', ''),
             })
         except Exception:
-            _logger.debug('Cleanup preview: could not parse one message header', exc_info=True)
+            _logger.warning('Cleanup preview: could not parse one message header', exc_info=True)
+
+    if not preview:
+        _logger.warning('Cleanup preview: %d UID(s) requested but 0 parsed — raw response: %r', len(subset), raw)
+        raise RuntimeError(
+            f'Server returned {len(subset)} matching email(s) but none could be read '
+            f'(see log for the raw IMAP response).'
+        )
     return preview
 
 def _imap_folder(folder: str) -> str:
