@@ -27,6 +27,11 @@ ICON_STOPPED = os.path.join(BASE_DIR, 'stopped.ico')
 
 FLASK_PORT = 5050
 
+# ── Version ────────────────────────────────────────────────────────────────────
+# Keep in sync with installer.iss's MyAppVersion when cutting a release.
+APP_VERSION       = '1.7.5'
+RELEASES_URL      = 'https://github.com/LuizBrunca/EmailManager/releases/latest'
+
 # ── Logger ─────────────────────────────────────────────────────────────────────
 os.makedirs(CONFIG_DIR, exist_ok=True)
 _logger = logging.getLogger('emailmanager')
@@ -685,6 +690,8 @@ _BASE_CSS = r"""
     font-size: .74rem; color: var(--text-faint); text-align: right;
   }
   .bottom-bar .bar-meta code { font-size: .73rem; color: var(--accent-soft); }
+  .bottom-bar .bar-meta a { color: var(--accent-soft); text-decoration: none; }
+  .bottom-bar .bar-meta a:hover { text-decoration: underline; }
 
   @media (max-width: 560px) {
     .form-grid { grid-template-columns: 1fr; }
@@ -793,7 +800,12 @@ _SETTINGS_HTML = r"""<!DOCTYPE html>
     </button>
     <span id="status"></span>
   </div>
-  <span class="bar-meta">Log: <code>{{ log_path }}</code><br>Saving restarts monitoring.</span>
+  <span class="bar-meta">
+    Log: <code>{{ log_path }}</code><br>
+    Saving restarts monitoring. &nbsp;·&nbsp;
+    v{{ version }} &nbsp;·&nbsp;
+    <a href="{{ releases_url }}" target="_blank" rel="noopener">Check for updates</a>
+  </span>
 </div>
 
 <template id="acct-tpl">
@@ -1253,7 +1265,7 @@ def favicon():
 
 @web_app.route('/')
 def index():
-    return render_template_string(_SETTINGS_HTML, log_path=LOG_PATH)
+    return render_template_string(_SETTINGS_HTML, log_path=LOG_PATH, version=APP_VERSION, releases_url=RELEASES_URL)
 
 @web_app.route('/api/config', methods=['GET'])
 def api_get_config():
