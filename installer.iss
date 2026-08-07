@@ -1,5 +1,5 @@
 #define MyAppName "EmailManager"
-#define MyAppVersion "1.7.5"
+#define MyAppVersion "1.7.6"
 #define MyAppPublisher "Luiz Brunca"
 #define MyAppURL "https://github.com/LuizBrunca/EmailManager"
 #define MyAppExeName "emailmanager.exe"
@@ -31,7 +31,6 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "Start {#MyAppName} automatically when Windows starts"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
 Source: "dist\emailmanager.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -40,7 +39,6 @@ Source: "dist\emailmanager.exe"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

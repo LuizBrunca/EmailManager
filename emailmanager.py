@@ -29,7 +29,7 @@ FLASK_PORT = 5050
 
 # ── Version ────────────────────────────────────────────────────────────────────
 # Keep in sync with installer.iss's MyAppVersion when cutting a release.
-APP_VERSION       = '1.7.5'
+APP_VERSION       = '1.7.6'
 RELEASES_URL      = 'https://github.com/LuizBrunca/EmailManager/releases/latest'
 
 # ── Logger ─────────────────────────────────────────────────────────────────────
